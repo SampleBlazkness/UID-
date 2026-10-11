@@ -2,6 +2,11 @@
 /*
 !/.gitignore
 !/.gitattributes
+!/.github/
+/.github/*
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/build.yml
 !/LICENSE
 !/README.md
 !/third_party/

@@ -1,0 +1,41 @@
+name: build
+
+# The tree was written for Windows hosts; this workflow builds it on a Linux
+# runner with the same NDK revision the README asks for (27.3.13750724 = r27c).
+# Same sources, same flags, same header SHA check -- only the host toolchain
+# directory differs, which build.py now resolves per host.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  module:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install NDK r27c (27.3.13750724)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/ndk.zip" \
+            https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
+          unzip -q "$RUNNER_TEMP/ndk.zip" -d "$RUNNER_TEMP"
+          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r27c" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" --version
+
+      - name: Build the module ZIP
+        run: python3 tools/uid-seccomp-module/build.py --module-only
+
+      - name: Verify the built package against its own SHA256SUMS
+        run: cd build/0.2.6/module && sha256sum -c SHA256SUMS
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: cq-uid-seccomp-0.2.6
+          path: build/0.2.6/
+          if-no-files-found: error
