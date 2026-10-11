@@ -1,11 +1,16 @@
 from pathlib import Path
-import argparse, hashlib, json, os, subprocess, zipfile
+import argparse, hashlib, json, os, subprocess, sys, zipfile
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SDK = Path(os.environ.get('ANDROID_SDK_ROOT') or os.environ.get('ANDROID_HOME') or
            str(Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData/Local'))) / 'Android/Sdk'))
-NDK = Path(os.environ.get('ANDROID_NDK_HOME') or str(SDK / 'ndk/27.3.13750724')) / 'toolchains/llvm/prebuilt/windows-x86_64'
+# The NDK ships one prebuilt toolchain per host; the module built is the same.
+HOST_TAG = 'windows-x86_64' if os.name == 'nt' else ('darwin-x86_64' if sys.platform == 'darwin' else 'linux-x86_64')
+EXE = '.exe' if os.name == 'nt' else ''
+NDK = Path(os.environ.get('ANDROID_NDK_HOME') or str(SDK / 'ndk/27.3.13750724')) / 'toolchains/llvm/prebuilt' / HOST_TAG
+CLANG = NDK / 'bin' / ('clang++' + EXE)
+READELF = NDK / 'bin' / ('llvm-readelf' + EXE)
 HEADER = ROOT / 'third_party/zygisk/zygisk.hpp'
 HEADER_SHA = 'f8d55e8b4f89d418c5941afe62ce6a09ddec1f4afd9a1b0a01eb40a93310dd28'
 VERSION = '0.2.6'
@@ -18,15 +23,15 @@ def main():
     parser.add_argument('--module-only', action='store_true', help='Accepted for compatibility; only the module is built.')
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
-    if not (NDK / 'bin/clang++.exe').is_file():
-        parser.error('Android NDK 27.3.13750724 is required. Set ANDROID_SDK_ROOT or ANDROID_NDK_HOME.')
+    if not CLANG.is_file():
+        parser.error(f'Android NDK 27.3.13750724 ({HOST_TAG}) is required at {CLANG}. Set ANDROID_SDK_ROOT or ANDROID_NDK_HOME.')
     build = args.output.resolve()
     (build / 'module/zygisk').mkdir(parents=True, exist_ok=True)
     assert hashlib.sha256(HEADER.read_bytes()).hexdigest() == HEADER_SHA
     env = dict(os.environ)
     def run(command):
         subprocess.run([str(x) for x in command], env=env, check=True, timeout=90)
-    common = [NDK / 'bin/clang++.exe', '--target=aarch64-linux-android33', '-shared', '-fPIC',
+    common = [CLANG, '--target=aarch64-linux-android33', '-shared', '-fPIC',
               '-O2', '-std=c++17', '-static-libstdc++', '-Wall', '-Wextra', '-Werror',
               '-Wl,-z,max-page-size=16384', '-Wl,-z,relro,-z,now', '-fvisibility=hidden']
     library = build / 'module/zygisk/arm64-v8a.so'
@@ -35,7 +40,7 @@ def main():
                   '-Wl,--version-script=' + str(HERE / 'exports.map'), '-Wl,--strip-all',
                   '-ldl', '-o', library])
     # Fail the build if cleanup accidentally binds to the process-wide registry.
-    symbols = subprocess.run([str(NDK / 'bin/llvm-readelf.exe'), '--dyn-syms', '--wide', str(library)],
+    symbols = subprocess.run([str(READELF), '--dyn-syms', '--wide', str(library)],
                              capture_output=True, text=True, check=True, timeout=20).stdout
     assert '__cxa_atexit' not in symbols and '__cxa_finalize' not in symbols
     assert 'zygisk_module_entry' in symbols
